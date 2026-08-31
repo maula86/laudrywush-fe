@@ -7,7 +7,8 @@ import { Logo } from "@/components/laundry/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useLaundryStore } from "@/store/laundry-store";
+import { ApiError } from "@/lib/api/client";
+import { useLogin } from "@/lib/api/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/login")({
@@ -29,40 +30,39 @@ export const Route = createFileRoute("/login")({
   component: LoginPage,
 });
 
-const demoAccounts = [
-  {
-    email: "admin@laundrywush.com",
-    role: "Admin / Owner",
-    desc: "Akses penuh: dashboard, laporan, pengaturan",
-  },
-  {
-    email: "kasir@laundrywush.com",
-    role: "Kasir",
-    desc: "Buat order, kelola pembayaran, cetak nota",
-  },
-  {
-    email: "operator@laundrywush.com",
-    role: "Operator",
-    desc: "Papan produksi & update status cucian",
-  },
-];
+const demoCredential = {
+  email: "admin@laundrywush.local",
+  password: "ChangeMe123!",
+  role: "Admin / Owner",
+  desc: "Akses penuh ke dashboard, laporan, dan pengaturan dari server demo.",
+} as const;
+
+const loginErrorMessage = (error: Error): string => {
+  if (error instanceof ApiError && error.status === 401) return "Email atau password salah.";
+  if (error instanceof TypeError) return "Tidak dapat menghubungi server.";
+  return error.message;
+};
 
 function LoginPage() {
   const navigate = useNavigate();
-  const login = useLaundryStore((s) => s.login);
-  const [email, setEmail] = useState("admin@laundrywush.com");
-  const [password, setPassword] = useState("demo1234");
+  const login = useLogin();
+  const [email, setEmail] = useState<string>(demoCredential.email);
+  const [password, setPassword] = useState<string>(demoCredential.password);
 
-  const submit = (value: string) => {
-    const user = login(value);
-    if (!user) {
-      toast.error("Akun tidak ditemukan", {
-        description: "Gunakan salah satu akun demo di sebelah kanan.",
+  const submit = async () => {
+    try {
+      const response = await login.mutateAsync({ email, password });
+      toast.success(`Selamat datang, ${response.user.name}`);
+      await navigate({
+        to: response.user.role === "operator" ? "/dashboard/production" : "/dashboard",
       });
-      return;
+    } catch (error) {
+      if (error instanceof Error) {
+        toast.error("Gagal masuk", { description: loginErrorMessage(error) });
+        return;
+      }
+      toast.error("Gagal masuk", { description: "Terjadi kesalahan saat masuk." });
     }
-    toast.success(`Selamat datang, ${user.name}`);
-    navigate({ to: user.role === "operator" ? "/dashboard/production" : "/dashboard" });
   };
 
   return (
@@ -76,14 +76,14 @@ function LoginPage() {
           <div className="rounded-2xl border bg-card p-6 shadow-card sm:p-8">
             <h1 className="text-2xl font-bold tracking-tight">Masuk ke dashboard</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Demo interaktif — data tersimpan di perangkat kamu.
+              Masuk dengan akun yang tersimpan aman di server LaundryWush.
             </p>
 
             <form
               className="mt-6 space-y-4"
               onSubmit={(e) => {
                 e.preventDefault();
-                submit(email);
+                void submit();
               }}
             >
               <div className="space-y-2">
@@ -109,8 +109,8 @@ function LoginPage() {
                   required
                 />
               </div>
-              <Button className="w-full" size="lg" type="submit">
-                Masuk <ArrowRight />
+              <Button className="w-full" size="lg" type="submit" disabled={login.isPending}>
+                {login.isPending ? "Memproses…" : "Masuk"} <ArrowRight />
               </Button>
             </form>
 
@@ -123,33 +123,31 @@ function LoginPage() {
 
             <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
               <ShieldCheck className="size-4 text-success-foreground" />
-              Password apa pun diterima pada mode demo.
+              Sesi login menggunakan token dari server dan disimpan di perangkat ini.
             </p>
           </div>
 
           <div>
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase">
-              Pilih akun demo
-            </h2>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase">Akun demo</h2>
             <div className="mt-4 space-y-3">
-              {demoAccounts.map((acc) => (
-                <button
-                  key={acc.email}
-                  type="button"
-                  onClick={() => {
-                    setEmail(acc.email);
-                    submit(acc.email);
-                  }}
-                  className={cn(
-                    "w-full rounded-xl border bg-card p-4 text-left shadow-card transition-all",
-                    "hover:border-primary/40 hover:shadow-elevated",
-                  )}
-                >
-                  <p className="font-semibold">{acc.role}</p>
-                  <p className="text-sm text-muted-foreground">{acc.desc}</p>
-                  <p className="mt-2 text-xs font-medium text-primary">{acc.email}</p>
-                </button>
-              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  setEmail(demoCredential.email);
+                  setPassword(demoCredential.password);
+                }}
+                className={cn(
+                  "w-full rounded-xl border bg-card p-4 text-left shadow-card transition-all",
+                  "hover:border-primary/40 hover:shadow-elevated",
+                )}
+              >
+                <p className="font-semibold">{demoCredential.role}</p>
+                <p className="text-sm text-muted-foreground">{demoCredential.desc}</p>
+                <p className="mt-2 text-xs font-medium text-primary">{demoCredential.email}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Password: {demoCredential.password}
+                </p>
+              </button>
             </div>
             <p className="mt-6 text-sm text-muted-foreground">
               Pelanggan hanya ingin cek status?{" "}

@@ -11,7 +11,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatDateTime, formatNumber, formatRupiah } from "@/lib/laundry/format";
-import { PAYMENT_LABEL, type Order, type OutletSettings } from "@/lib/laundry/types";
+import { PAYMENT_LABEL, type Order } from "@/lib/laundry/types";
+
+type ReceiptOutlet = {
+  readonly name: string;
+  readonly address: string;
+  readonly phone: string;
+  readonly receiptFooter: string;
+};
 
 export function ReceiptDialog({
   order,
@@ -19,10 +26,10 @@ export function ReceiptDialog({
   open,
   onOpenChange,
 }: {
-  order: Order | null;
-  outlet: OutletSettings;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  readonly order: Order | null;
+  readonly outlet: ReceiptOutlet | null | undefined;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
 }) {
   const trackingUrl =
     typeof window !== "undefined" && order
@@ -39,7 +46,7 @@ export function ReceiptDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {order && (
+        {order && outlet && (
           <div className="rounded-xl border bg-surface p-5 text-sm">
             <div className="text-center">
               <p className="font-bold">{outlet.name}</p>
@@ -107,7 +114,7 @@ export function ReceiptDialog({
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { readonly label: string; readonly value: string }) {
   return (
     <div className="flex justify-between gap-3">
       <span className="text-muted-foreground">{label}</span>

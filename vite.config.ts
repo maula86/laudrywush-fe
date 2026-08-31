@@ -7,6 +7,21 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
+  vite: {
+    server: {
+      /**
+       * Keep browser API calls same-origin in local development. The frontend
+       * talks to `/api/*` on its own Vite origin (including :8082), while Vite
+       * forwards those calls to the Bun API; no browser CORS preflight is needed.
+       */
+      proxy: {
+        "/api": {
+          target: process.env["VITE_API_BASE_URL"] ?? "http://localhost:3001",
+          changeOrigin: true,
+        },
+      },
+    },
+  },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this

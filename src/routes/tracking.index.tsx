@@ -1,11 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { Search } from "lucide-react";
+import { ClipboardList, QrCode, Search } from "lucide-react";
 import { useState } from "react";
 
 import { Logo } from "@/components/laundry/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useLaundryStore } from "@/store/laundry-store";
 
 export const Route = createFileRoute("/tracking/")({
   head: () => ({
@@ -14,7 +13,7 @@ export const Route = createFileRoute("/tracking/")({
       {
         name: "description",
         content:
-          "Masukkan nomor nota atau nomor HP untuk melacak status cucian Anda secara real-time di LaundryWush.",
+          "Masukkan nomor nota untuk melacak status cucian Anda secara real-time di LaundryWush.",
       },
       { property: "og:title", content: "Lacak Cucian — LaundryWush" },
       {
@@ -28,25 +27,18 @@ export const Route = createFileRoute("/tracking/")({
 
 function TrackingSearchPage() {
   const navigate = useNavigate();
-  const orders = useLaundryStore((s) => s.orders);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const recent = orders.slice(0, 4);
-
   const submit = () => {
-    const q = query.trim().toLowerCase();
-    const found = orders.find(
-      (o) =>
-        o.orderNumber.toLowerCase() === q ||
-        o.customerPhone.replace(/\D/g, "") === q.replace(/\D/g, ""),
-    );
-    if (!found) {
-      setError("Nomor nota atau nomor HP tidak ditemukan. Coba salah satu contoh di bawah.");
+    const orderNumber = query.trim();
+    if (!orderNumber) {
+      setError("Masukkan nomor nota terlebih dahulu.");
       return;
     }
+
     setError(null);
-    navigate({ to: "/tracking/$orderNumber", params: { orderNumber: found.orderNumber } });
+    void navigate({ to: "/tracking/$orderNumber", params: { orderNumber } });
   };
 
   return (
@@ -59,22 +51,22 @@ function TrackingSearchPage() {
         <div className="mx-auto mt-14 max-w-xl text-center">
           <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Lacak cucian kamu</h1>
           <p className="mt-3 text-muted-foreground">
-            Masukkan nomor nota (contoh: LW-20250101-001) atau nomor HP yang terdaftar.
+            Masukkan nomor nota yang tercetak pada struk cucian untuk melihat progres terbaru.
           </p>
 
           <form
             className="mt-8 flex flex-col gap-3 sm:flex-row"
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               submit();
             }}
           >
             <Input
               className="h-12 bg-card text-base"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Nomor nota atau nomor HP"
-              aria-label="Nomor nota atau nomor HP"
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Contoh: LW-20260830-001"
+              aria-label="Nomor nota"
             />
             <Button className="h-12" size="lg" type="submit">
               <Search /> Lacak
@@ -85,23 +77,28 @@ function TrackingSearchPage() {
 
         <div className="mx-auto mt-14 max-w-xl">
           <p className="text-sm font-semibold text-muted-foreground uppercase">
-            Contoh nota demo
+            Di mana menemukan nomor nota?
           </p>
-          <div className="mt-3 space-y-2">
-            {recent.map((o) => (
-              <Link
-                key={o.id}
-                to="/tracking/$orderNumber"
-                params={{ orderNumber: o.orderNumber }}
-                className="flex items-center justify-between rounded-xl border bg-card p-4 shadow-card transition-colors hover:border-primary/40"
-              >
-                <div>
-                  <p className="font-semibold">{o.orderNumber}</p>
-                  <p className="text-sm text-muted-foreground">{o.customerName}</p>
-                </div>
-                <span className="text-sm font-medium text-primary">Lihat status</span>
-              </Link>
-            ))}
+          <div className="mt-3 rounded-xl border bg-card p-4 shadow-card">
+            <div className="flex gap-3">
+              <ClipboardList className="mt-0.5 size-5 text-primary" />
+              <div>
+                <p className="font-semibold">Cek struk cucian</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Nomor nota tercetak pada struk yang diberikan oleh kasir saat pesanan dibuat.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex gap-3 border-t pt-4">
+              <QrCode className="mt-0.5 size-5 text-primary" />
+              <div>
+                <p className="font-semibold">Pindai QR pada struk</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Jika struk memiliki QR code, pindai kode tersebut untuk membuka halaman pelacakan
+                  langsung.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

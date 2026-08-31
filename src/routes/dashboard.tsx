@@ -16,8 +16,9 @@ import { useEffect, useState } from "react";
 import { Logo } from "@/components/laundry/logo";
 import { Button } from "@/components/ui/button";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { hasPermission, useCurrentUser, useLaundryStore } from "@/store/laundry-store";
-import type { Permission } from "@/lib/laundry/types";
+import { useSessionUser } from "@/lib/api/auth-store";
+import { useLogout, type DashboardNavPath, canAccessDashboardPath } from "@/lib/api/hooks/use-auth";
+import { useOutlet } from "@/lib/api/hooks/use-outlet";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard")({
@@ -25,18 +26,17 @@ export const Route = createFileRoute("/dashboard")({
 });
 
 const navItems = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, perm: "view_dashboard" },
-  { to: "/dashboard/pos", label: "Kasir / POS", icon: ShoppingCart, perm: "create_order" },
-  { to: "/dashboard/orders", label: "Order", icon: Receipt, perm: "view_orders" },
-  { to: "/dashboard/production", label: "Produksi", icon: Factory, perm: "update_production" },
-  { to: "/dashboard/customers", label: "Pelanggan", icon: Users, perm: "view_orders" },
-  { to: "/dashboard/reports", label: "Laporan", icon: BarChart3, perm: "view_reports" },
-  { to: "/dashboard/settings", label: "Pengaturan", icon: Settings, perm: "manage_settings" },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/dashboard/pos", label: "Kasir / POS", icon: ShoppingCart },
+  { to: "/dashboard/orders", label: "Order", icon: Receipt },
+  { to: "/dashboard/production", label: "Produksi", icon: Factory },
+  { to: "/dashboard/customers", label: "Pelanggan", icon: Users },
+  { to: "/dashboard/reports", label: "Laporan", icon: BarChart3 },
+  { to: "/dashboard/settings", label: "Pengaturan", icon: Settings },
 ] as const satisfies readonly {
-  to: string;
+  to: DashboardNavPath;
   label: string;
   icon: typeof Users;
-  perm: Permission;
 }[];
 
 const roleLabel: Record<string, string> = {
@@ -48,14 +48,33 @@ const roleLabel: Record<string, string> = {
 function DashboardLayout() {
   const hydrated = useHydrated();
   const navigate = useNavigate();
-  const user = useCurrentUser();
-  const logout = useLaundryStore((s) => s.logout);
-  const outlet = useLaundryStore((s) => s.outlet);
+  const user = useSessionUser();
+  const logout = useLogout();
+  const outletQuery = useOutlet();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     if (hydrated && !user) navigate({ to: "/login" });
   }, [hydrated, user, navigate]);
+
+  /**
+   * An operator has no permitted section at `/dashboard`, so send them straight
+   * to the production board. Kept above the early return: hooks must run in the
+   * same order on every render.
+   */
+  useEffect(() => {
+    if (hydrated && user?.role === "operator") navigate({ to: "/dashboard/production" });
+  }, [hydrated, user, navigate]);
+
+  const signOut = async () => {
+    // Clear locally and leave even when the request fails, so an expired token
+    // can never trap the user inside the dashboard.
+    try {
+      await logout.mutateAsync();
+    } finally {
+      await navigate({ to: "/login" });
+    }
+  };
 
   if (!hydrated || !user) {
     return (
@@ -65,7 +84,9 @@ function DashboardLayout() {
     );
   }
 
-  const items = navItems.filter((item) => hasPermission(user, item.perm));
+  const items = navItems.filter((item) => canAccessDashboardPath(user.role, item.to));
+  const outletName = outletQuery.data?.name ?? (outletQuery.isLoading ? "Memuat outlet…" : "");
+  const outletAddress = outletQuery.data?.address ?? "";
 
   return (
     <div className="flex min-h-screen bg-surface">
@@ -112,10 +133,7 @@ function DashboardLayout() {
           <p className="text-sm font-semibold text-sidebar-accent-foreground">{user.name}</p>
           <p className="text-xs text-sidebar-foreground/70">{roleLabel[user.role]}</p>
           <button
-            onClick={() => {
-              logout();
-              navigate({ to: "/login" });
-            }}
+            onClick={() => void signOut()}
             className="mt-3 flex w-full items-center gap-2 rounded-lg bg-sidebar/60 px-3 py-2 text-xs font-medium text-sidebar-foreground transition-colors hover:bg-sidebar"
           >
             <LogOut className="size-3.5" /> Keluar
@@ -142,8 +160,8 @@ function DashboardLayout() {
             <Menu />
           </Button>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">{outlet.name}</p>
-            <p className="truncate text-xs text-muted-foreground">{outlet.address}</p>
+            <p className="truncate text-sm font-semibold">{outletName}</p>
+            <p className="truncate text-xs text-muted-foreground">{outletAddress}</p>
           </div>
           <Button asChild variant="outline" size="sm" className="ml-auto">
             <Link to="/tracking">Halaman tracking</Link>

@@ -17,8 +17,8 @@ import {
 import heroImage from "@/assets/hero-dashboard.jpg";
 import { Logo } from "@/components/laundry/logo";
 import { Button } from "@/components/ui/button";
+import { subscriptionPlans } from "@/lib/content/landing";
 import { formatRupiah } from "@/lib/laundry/format";
-import { subscriptionPlans } from "@/lib/laundry/mock-data";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({

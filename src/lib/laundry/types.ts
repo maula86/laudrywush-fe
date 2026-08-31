@@ -1,4 +1,3 @@
-export type UserRole = "admin" | "kasir" | "operator";
 export type PaymentMethod = "cash" | "transfer" | "qris" | "piutang";
 export type CustomerType = "retail" | "corporate";
 export type ServiceType =
@@ -16,41 +15,6 @@ export type OrderStatus =
   | "completed"
   | "cancelled";
 export type PaymentStatus = "unpaid" | "paid" | "partial" | "overdue";
-
-export type Permission =
-  | "view_dashboard"
-  | "create_order"
-  | "view_orders"
-  | "update_production"
-  | "view_reports"
-  | "manage_settings";
-
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  phone: string;
-  role: UserRole;
-  permissions: Permission[] | ["*"];
-  avatar: string | null;
-  isActive: boolean;
-  createdAt: string;
-}
-
-export interface Customer {
-  id: string;
-  name: string;
-  phone: string;
-  email: string | null;
-  address: string | null;
-  type: CustomerType;
-  company: string | null;
-  notes: string;
-  totalOrders: number;
-  totalSpent: number;
-  lastOrderDate: string | null;
-  createdAt: string;
-}
 
 export interface ServicePrice {
   id: string;
@@ -99,41 +63,6 @@ export interface Order {
   updatedAt: string;
   history: { status: OrderStatus; at: string }[];
 }
-
-export interface Expense {
-  id: string;
-  category: "detergent" | "electricity" | "water" | "salary" | "maintenance" | "other";
-  amount: number;
-  description: string;
-  date: string;
-}
-
-export interface OutletSettings {
-  name: string;
-  address: string;
-  phone: string;
-  email: string;
-  operatingHours: {
-    weekday: { open: string; close: string };
-    weekend: { open: string; close: string };
-  };
-  taxRate: number;
-  currency: string;
-  receiptFooter: string;
-}
-
-export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
-  admin: [
-    "view_dashboard",
-    "create_order",
-    "view_orders",
-    "update_production",
-    "view_reports",
-    "manage_settings",
-  ],
-  kasir: ["view_dashboard", "create_order", "view_orders"],
-  operator: ["view_orders", "update_production"],
-};
 
 export const PRODUCTION_STAGES: {
   status: OrderStatus;

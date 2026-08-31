@@ -1,13 +1,27 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Clock, Package, Phone } from "lucide-react";
+import { ArrowLeft, Check, Clock, Package } from "lucide-react";
 
 import { Logo } from "@/components/laundry/logo";
-import { OrderTimeline } from "@/components/laundry/order-timeline";
 import { PaymentBadge, StatusBadge } from "@/components/laundry/status-badge";
 import { Button } from "@/components/ui/button";
 import { useHydrated } from "@/hooks/use-hydrated";
-import { formatDateTime, formatNumber, formatRupiah, fromNow } from "@/lib/laundry/format";
-import { useLaundryStore } from "@/store/laundry-store";
+import { ApiError } from "@/lib/api/client";
+import { trackingErrorMessage, useTracking } from "@/lib/api/hooks/use-tracking";
+import type { Tracking } from "@/lib/api/types";
+import { formatDateTime, fromNow } from "@/lib/laundry/format";
+import { PRODUCTION_STAGES } from "@/lib/laundry/types";
+import { cn } from "@/lib/utils";
+
+const trackingFlow = [...PRODUCTION_STAGES.map((stage) => stage.status), "completed"] as const;
+const trackingLabels: Record<string, string> = {
+  pending: "Order diterima",
+  washing: "Sedang dicuci",
+  drying: "Dikeringkan",
+  ironing: "Disetrika",
+  packing: "Packing",
+  ready: "Siap diambil",
+  completed: "Selesai / diambil",
+};
 
 export const Route = createFileRoute("/tracking/$orderNumber")({
   head: ({ params }) => {
@@ -34,8 +48,9 @@ export const Route = createFileRoute("/tracking/$orderNumber")({
 function TrackingDetailPage() {
   const { orderNumber } = Route.useParams();
   const hydrated = useHydrated();
-  const order = useLaundryStore((s) => s.orders.find((o) => o.orderNumber === orderNumber));
-  const outlet = useLaundryStore((s) => s.outlet);
+  const { data: order, error, isLoading } = useTracking(orderNumber);
+  const isNotFound = error instanceof ApiError && error.status === 404;
+  const lastHistoryAt = order?.history.at(-1)?.at;
 
   return (
     <main className="gradient-hero min-h-screen">
@@ -51,32 +66,28 @@ function TrackingDetailPage() {
           </Button>
         </div>
 
-        {!hydrated ? (
+        {!hydrated || isLoading ? (
           <div className="mx-auto mt-16 max-w-2xl text-center text-sm text-muted-foreground">
             Memuat data cucian…
           </div>
-        ) : !order ? (
+        ) : isNotFound ? (
+          <NotFoundCard orderNumber={orderNumber} />
+        ) : error ? (
           <div className="mx-auto mt-16 max-w-md rounded-2xl border bg-card p-8 text-center shadow-card">
             <Package className="mx-auto size-10 text-muted-foreground" />
-            <h1 className="mt-4 text-xl font-semibold">Nota tidak ditemukan</h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Nomor <span className="font-medium">{orderNumber}</span> tidak terdaftar. Cek
-              kembali nota kamu atau hubungi outlet.
-            </p>
+            <h1 className="mt-4 text-xl font-semibold">Data cucian tidak dapat dimuat</h1>
+            <p className="mt-2 text-sm text-muted-foreground">{trackingErrorMessage(error)}</p>
             <Button asChild className="mt-6">
               <Link to="/tracking">Coba lagi</Link>
             </Button>
           </div>
-        ) : (
+        ) : order ? (
           <div className="mx-auto mt-10 grid max-w-4xl gap-6 lg:grid-cols-[1.1fr_1fr]">
             <div className="rounded-2xl border bg-card p-6 shadow-card">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-medium text-muted-foreground uppercase">
-                    Nomor nota
-                  </p>
+                  <p className="text-xs font-medium text-muted-foreground uppercase">Nomor nota</p>
                   <h1 className="text-2xl font-bold tracking-tight">{order.orderNumber}</h1>
-                  <p className="mt-1 text-sm text-muted-foreground">{order.customerName}</p>
                 </div>
                 <div className="flex flex-col items-end gap-2">
                   <StatusBadge status={order.status} />
@@ -88,48 +99,25 @@ function TrackingDetailPage() {
                 <InfoTile
                   icon={Clock}
                   label="Estimasi selesai"
-                  value={formatDateTime(order.estimatedCompletion)}
-                  hint={fromNow(order.estimatedCompletion)}
+                  value={
+                    order.estimatedCompletion
+                      ? formatDateTime(order.estimatedCompletion)
+                      : "Belum ditentukan"
+                  }
+                  hint={order.estimatedCompletion ? fromNow(order.estimatedCompletion) : "—"}
                 />
                 <InfoTile
                   icon={Package}
                   label="Terakhir diperbarui"
-                  value={formatDateTime(order.updatedAt)}
-                  hint={fromNow(order.updatedAt)}
+                  value={lastHistoryAt ? formatDateTime(lastHistoryAt) : "—"}
+                  hint={lastHistoryAt ? fromNow(lastHistoryAt) : "Belum ada riwayat"}
                 />
               </div>
 
-              <div className="mt-6 border-t pt-5">
-                <p className="text-sm font-semibold">Rincian layanan</p>
-                <div className="mt-3 space-y-2">
-                  {order.items.map((item) => (
-                    <div key={item.id} className="flex justify-between gap-3 text-sm">
-                      <span>
-                        {item.serviceName}
-                        <span className="text-muted-foreground">
-                          {" "}
-                          · {formatNumber(item.quantity)}
-                        </span>
-                      </span>
-                      <span className="font-medium tabular-nums">
-                        {formatRupiah(item.subtotal)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div className="mt-3 flex justify-between border-t pt-3 font-semibold">
-                  <span>Total</span>
-                  <span className="tabular-nums">{formatRupiah(order.total)}</span>
-                </div>
-              </div>
-
-              <div className="mt-6 flex items-center gap-2 rounded-xl bg-surface p-4 text-sm">
-                <Phone className="size-4 text-primary" />
-                <span className="text-muted-foreground">
-                  Ada pertanyaan? Hubungi {outlet.name} di{" "}
-                  <span className="font-medium text-foreground">{outlet.phone}</span>
-                </span>
-              </div>
+              {/* Public tracking projection intentionally excludes customer, item, and price details. */}
+              <p className="mt-6 rounded-xl bg-surface p-4 text-sm text-muted-foreground">
+                Untuk pertanyaan mengenai pesanan, hubungi outlet tempat pesanan dibuat.
+              </p>
             </div>
 
             <div className="rounded-2xl border bg-card p-6 shadow-card">
@@ -137,12 +125,81 @@ function TrackingDetailPage() {
               <p className="mb-5 text-sm text-muted-foreground">
                 Diperbarui otomatis oleh operator outlet.
               </p>
-              <OrderTimeline order={order} />
+              <TrackingTimeline order={order} />
             </div>
           </div>
-        )}
+        ) : null}
       </div>
     </main>
+  );
+}
+
+function NotFoundCard({ orderNumber }: { readonly orderNumber: string }) {
+  return (
+    <div className="mx-auto mt-16 max-w-md rounded-2xl border bg-card p-8 text-center shadow-card">
+      <Package className="mx-auto size-10 text-muted-foreground" />
+      <h1 className="mt-4 text-xl font-semibold">Nota tidak ditemukan</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Nomor <span className="font-medium">{orderNumber}</span> tidak terdaftar. Cek kembali nota
+        kamu atau hubungi outlet.
+      </p>
+      <Button asChild className="mt-6">
+        <Link to="/tracking">Coba lagi</Link>
+      </Button>
+    </div>
+  );
+}
+
+function TrackingTimeline({ order }: { readonly order: Tracking }) {
+  const currentIndex = trackingFlow.indexOf(order.status);
+
+  return (
+    <ol className="relative space-y-0">
+      {trackingFlow.map((stage, index) => {
+        const done = currentIndex >= index;
+        const active = currentIndex === index;
+        const at = order.history.find((entry) => entry.status === stage)?.at;
+
+        return (
+          <li key={stage} className="flex gap-4">
+            <div className="flex flex-col items-center">
+              <span
+                className={cn(
+                  "flex size-8 shrink-0 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors",
+                  done
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-card text-muted-foreground",
+                  active && "ring-4 ring-primary/15",
+                )}
+              >
+                {done ? <Check className="size-4" /> : index + 1}
+              </span>
+              {index < trackingFlow.length - 1 && (
+                <span
+                  className={cn(
+                    "my-1 w-0.5 flex-1 rounded-full",
+                    currentIndex > index ? "bg-primary" : "bg-border",
+                  )}
+                />
+              )}
+            </div>
+            <div className={cn("pb-6", index === trackingFlow.length - 1 && "pb-0")}>
+              <p
+                className={cn(
+                  "text-sm font-semibold",
+                  done ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {trackingLabels[stage]}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {at ? formatDateTime(at) : active ? "Sedang berlangsung" : "Menunggu"}
+              </p>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -152,10 +209,10 @@ function InfoTile({
   value,
   hint,
 }: {
-  icon: typeof Clock;
-  label: string;
-  value: string;
-  hint: string;
+  readonly icon: typeof Clock;
+  readonly label: string;
+  readonly value: string;
+  readonly hint: string;
 }) {
   return (
     <div className="rounded-xl border bg-surface p-4">

@@ -8,7 +8,7 @@
 > change in a working state.
 <!-- LOVABLE:END -->
 
-# PROJECT AGENTS NOTES
+# PROJECT KNOWLEDGE BASE
 
 ## OVERVIEW
 Frontend app built with Vite, TanStack Start/Router, React 19, TypeScript, Tailwind v4,

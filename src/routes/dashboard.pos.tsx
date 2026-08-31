@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Minus, Plus, Search, ShoppingCart, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { ReceiptDialog } from "@/components/laundry/receipt-dialog";
@@ -15,14 +15,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useCustomers } from "@/lib/api/hooks/use-customers";
+import { orderApiErrorMessage, useCreateOrder } from "@/lib/api/hooks/use-orders";
+import { useOutlet } from "@/lib/api/hooks/use-outlet";
+import { useServices } from "@/lib/api/hooks/use-services";
+import {
+  createOrderCustomerLookup,
+  toOrderViewModel,
+  type OrderCustomerLookup,
+} from "@/lib/api/order-view-model";
+import type { CreateOrderRequest, Service } from "@/lib/api/types";
 import { formatNumber, formatRupiah } from "@/lib/laundry/format";
 import {
   PAYMENT_LABEL,
   type CustomerType,
   type Order,
   type PaymentMethod,
+  type ServicePrice,
 } from "@/lib/laundry/types";
-import { useLaundryStore } from "@/store/laundry-store";
 
 export const Route = createFileRoute("/dashboard/pos")({
   head: () => ({
@@ -48,15 +58,28 @@ interface CartLine {
   quantity: number;
 }
 
+const toServicePrice = (service: Service): ServicePrice => ({
+  id: service.id,
+  name: service.name,
+  type: service.type,
+  pricePerUnit: service.pricePerUnit,
+  unit: service.unit,
+  estimatedHours: service.estimatedHours,
+  isActive: service.isActive,
+});
+
 function PosPage() {
-  const allServices = useLaundryStore((s) => s.services);
-  const services = useMemo(() => allServices.filter((x) => x.isActive), [allServices]);
-  const customers = useLaundryStore((s) => s.customers);
-  const outlet = useLaundryStore((s) => s.outlet);
-  const createOrder = useLaundryStore((s) => s.createOrder);
+  const servicesQuery = useServices();
+  const outletQuery = useOutlet();
+  const createOrderMutation = useCreateOrder();
+  const services = useMemo(
+    () => (servicesQuery.data ?? []).filter((service) => service.isActive).map(toServicePrice),
+    [servicesQuery.data],
+  );
 
   const [cart, setCart] = useState<CartLine[]>([]);
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerType, setCustomerType] = useState<CustomerType>("retail");
@@ -68,28 +91,46 @@ function PosPage() {
   const [notes, setNotes] = useState("");
   const [receipt, setReceipt] = useState<Order | null>(null);
 
-  const suggestions = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return customers
-      .filter((c) => c.name.toLowerCase().includes(q) || c.phone.includes(q))
-      .slice(0, 5);
-  }, [customers, query]);
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => setDebouncedQuery(query), 300);
+    return () => window.clearTimeout(timeoutId);
+  }, [query]);
 
-  const lines = cart.map((line) => {
-    const service = services.find((s) => s.id === line.serviceId)!;
-    return {
-      ...line,
-      service,
-      subtotal: Math.round(service.pricePerUnit * line.quantity),
-    };
+  const customerSearch = debouncedQuery.trim();
+  const customersQuery = useCustomers({ search: customerSearch });
+  const customersData = customersQuery.data;
+  const customerLookup = useMemo(
+    () => createOrderCustomerLookup(customersData ?? []),
+    [customersData],
+  );
+
+  // The server already narrowed by name/phone; cap the dropdown at five rows.
+  const suggestions = useMemo(
+    () => (customerSearch ? (customersData ?? []).slice(0, 5) : []),
+    [customersData, customerSearch],
+  );
+
+  const lines = cart.flatMap((line) => {
+    const service = services.find((item) => item.id === line.serviceId);
+    if (!service) return [];
+    return [
+      {
+        ...line,
+        service,
+        subtotal: Math.round(service.pricePerUnit * line.quantity),
+      },
+    ];
   });
 
-  const subtotal = lines.reduce((sum, l) => sum + l.subtotal, 0);
+  const outlet = outletQuery.data;
+  const taxRate = outlet?.taxRate ?? 0;
+  const subtotal = lines.reduce((sum, line) => sum + line.subtotal, 0);
   const discountValue = Math.max(0, Number(discount) || 0);
-  const tax = Math.round((subtotal * outlet.taxRate) / 100);
+  const tax = Math.round((subtotal * taxRate) / 100);
   const total = Math.max(0, subtotal + tax - discountValue);
-  const estimatedHours = lines.reduce((max, l) => Math.max(max, l.service.estimatedHours), 24);
+  const estimatedHours = Math.round(
+    lines.reduce((max, line) => Math.max(max, line.service.estimatedHours), 24),
+  );
 
   const setQty = (serviceId: string, quantity: number) =>
     setCart((prev) =>
@@ -101,9 +142,7 @@ function PosPage() {
   const addService = (serviceId: string) =>
     setCart((prev) =>
       prev.some((l) => l.serviceId === serviceId)
-        ? prev.map((l) =>
-            l.serviceId === serviceId ? { ...l, quantity: l.quantity + 1 } : l,
-          )
+        ? prev.map((l) => (l.serviceId === serviceId ? { ...l, quantity: l.quantity + 1 } : l))
         : [...prev, { serviceId, quantity: 1 }],
     );
 
@@ -120,41 +159,88 @@ function PosPage() {
     setPayment("cash");
   };
 
-  const submit = () => {
+  const submit = async () => {
+    if (createOrderMutation.isPending) {
+      return;
+    }
+
     if (!lines.length) {
       toast.error("Tambahkan minimal satu layanan.");
       return;
     }
-    if (!customerName.trim() || !customerPhone.trim()) {
-      toast.error("Nama dan nomor HP pelanggan wajib diisi.");
+
+    if (lines.some((line) => line.quantity <= 0)) {
+      toast.error("Qty setiap layanan harus lebih dari 0.");
       return;
     }
 
-    const order = createOrder({
-      customer: {
-        ...(customerId ? { id: customerId } : {}),
-        name: customerName.trim(),
-        phone: customerPhone.trim(),
-        type: customerType,
-        company: customerType === "corporate" ? company.trim() || null : null,
-      },
-      items: lines.map((l) => ({
-        serviceId: l.service.id,
-        serviceName: l.service.name,
-        quantity: l.quantity,
-        unitPrice: l.service.pricePerUnit,
-        subtotal: l.subtotal,
-        notes: null,
+    const trimmedCustomerName = customerName.trim();
+    const trimmedCustomerPhone = customerPhone.trim();
+    const trimmedCompany = company.trim();
+    const trimmedNotes = notes.trim();
+    const hasExistingCustomer = customerId !== null;
+    const hasInlineCustomerInput =
+      trimmedCustomerName.length > 0 || trimmedCustomerPhone.length > 0;
+    const inlineCustomerSnapshot =
+      !hasExistingCustomer && hasInlineCustomerInput && trimmedCustomerName && trimmedCustomerPhone
+        ? {
+            name: trimmedCustomerName,
+            phone: trimmedCustomerPhone,
+            type: customerType,
+          }
+        : undefined;
+
+    if (
+      !hasExistingCustomer &&
+      hasInlineCustomerInput &&
+      (!trimmedCustomerName || !trimmedCustomerPhone)
+    ) {
+      toast.error(
+        "Isi nama dan nomor HP pelanggan, atau kosongkan keduanya untuk order tanpa pelanggan.",
+      );
+      return;
+    }
+
+    const requestBody: CreateOrderRequest = {
+      items: lines.map((line) => ({
+        serviceId: line.service.id,
+        quantity: line.quantity,
       })),
       paymentMethod: payment,
-      discount: discountValue,
-      notes,
-      estimatedHours,
-    });
+      ...(hasExistingCustomer ? { customerId } : {}),
+      ...(!hasExistingCustomer && hasInlineCustomerInput
+        ? {
+            newCustomer: {
+              name: trimmedCustomerName,
+              phone: trimmedCustomerPhone,
+              type: customerType,
+              ...(customerType === "corporate" && trimmedCompany
+                ? { company: trimmedCompany }
+                : {}),
+            },
+          }
+        : {}),
+      ...(discountValue > 0 ? { discount: discountValue } : {}),
+      ...(trimmedNotes ? { notes: trimmedNotes } : {}),
+      estimatedHours: Math.round(estimatedHours),
+    };
 
-    setReceipt(order);
-    toast.success(`Order ${order.orderNumber} berhasil dibuat.`);
-    reset();
+    try {
+      const order = await createOrderMutation.mutateAsync(requestBody);
+      /**
+       * Resolve the receipt name from the customers cache first. When the order
+       * created a brand-new customer the server returns its fresh id, which is
+       * not in the cache yet, so fall back to what the cashier just typed.
+       */
+      const receiptLookup: OrderCustomerLookup = (id) =>
+        customerLookup?.(id) ?? inlineCustomerSnapshot;
+
+      setReceipt(toOrderViewModel(order, receiptLookup));
+      toast.success(`Order ${order.orderNumber} berhasil dibuat.`);
+      reset();
+    } catch (error) {
+      toast.error(orderApiErrorMessage(error));
+    }
   };
 
   return (
@@ -170,21 +256,29 @@ function PosPage() {
         <div className="space-y-4">
           <div className="rounded-xl border bg-card p-5 shadow-card">
             <h2 className="text-sm font-semibold">Daftar layanan</h2>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              {services.map((service) => (
-                <button
-                  key={service.id}
-                  onClick={() => addService(service.id)}
-                  className="rounded-lg border bg-surface p-4 text-left transition-colors hover:border-primary hover:bg-primary/5"
-                >
-                  <p className="text-sm font-semibold">{service.name}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {formatRupiah(service.pricePerUnit)} / {service.unit} · estimasi{" "}
-                    {service.estimatedHours} jam
-                  </p>
-                </button>
-              ))}
-            </div>
+            {servicesQuery.isLoading ? (
+              <p className="mt-4 text-sm text-muted-foreground">Memuat layanan…</p>
+            ) : servicesQuery.isError ? (
+              <p className="mt-4 text-sm text-destructive">Gagal memuat layanan.</p>
+            ) : services.length === 0 ? (
+              <p className="mt-4 text-sm text-muted-foreground">Belum ada layanan aktif.</p>
+            ) : (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {services.map((service) => (
+                  <button
+                    key={service.id}
+                    onClick={() => addService(service.id)}
+                    className="rounded-lg border bg-surface p-4 text-left transition-colors hover:border-primary hover:bg-primary/5"
+                  >
+                    <p className="text-sm font-semibold">{service.name}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatRupiah(service.pricePerUnit)} / {service.unit} · estimasi{" "}
+                      {service.estimatedHours} jam
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="rounded-xl border bg-card p-5 shadow-card">
@@ -213,7 +307,9 @@ function PosPage() {
                         onClick={() =>
                           setQty(
                             line.serviceId,
-                            Number((line.quantity - (line.service.unit === "kg" ? 0.5 : 1)).toFixed(1)),
+                            Number(
+                              (line.quantity - (line.service.unit === "kg" ? 0.5 : 1)).toFixed(1),
+                            ),
                           )
                         }
                         aria-label="Kurangi"
@@ -231,7 +327,9 @@ function PosPage() {
                         onClick={() =>
                           setQty(
                             line.serviceId,
-                            Number((line.quantity + (line.service.unit === "kg" ? 0.5 : 1)).toFixed(1)),
+                            Number(
+                              (line.quantity + (line.service.unit === "kg" ? 0.5 : 1)).toFixed(1),
+                            ),
                           )
                         }
                         aria-label="Tambah"
@@ -273,6 +371,9 @@ function PosPage() {
                     onChange={(e) => setQuery(e.target.value)}
                   />
                 </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Kosongkan data pelanggan jika ingin membuat order tanpa pelanggan.
+                </p>
                 {suggestions.length > 0 && (
                   <div className="mt-1 overflow-hidden rounded-lg border bg-popover shadow-md">
                     {suggestions.map((c) => (
@@ -323,7 +424,11 @@ function PosPage() {
                 <Label>Tipe pelanggan</Label>
                 <Select
                   value={customerType}
-                  onValueChange={(v) => setCustomerType(v as CustomerType)}
+                  onValueChange={(value) => {
+                    if (value === "retail" || value === "corporate") {
+                      setCustomerType(value);
+                    }
+                  }}
                 >
                   <SelectTrigger className="mt-1.5 w-full">
                     <SelectValue />
@@ -348,7 +453,6 @@ function PosPage() {
               )}
             </div>
           </div>
-
 
           <div className="rounded-xl border bg-card p-5 shadow-card">
             <h2 className="text-sm font-semibold">Pembayaran</h2>
@@ -390,8 +494,9 @@ function PosPage() {
               </div>
 
               <div className="space-y-1.5 border-t pt-3 text-sm">
+                {/* Preview only for cashier UX; the backend remains authoritative for order totals. */}
                 <SummaryRow label="Subtotal" value={formatRupiah(subtotal)} />
-                <SummaryRow label={`Pajak ${outlet.taxRate}%`} value={formatRupiah(tax)} />
+                <SummaryRow label={`Pajak ${taxRate}%`} value={formatRupiah(tax)} />
                 <SummaryRow label="Diskon" value={`- ${formatRupiah(discountValue)}`} />
                 <SummaryRow
                   label="Total berat/pcs"
@@ -403,8 +508,13 @@ function PosPage() {
                 </div>
               </div>
 
-              <Button className="w-full" size="lg" onClick={submit}>
-                Simpan & Cetak Nota
+              <Button
+                className="w-full"
+                size="lg"
+                onClick={() => void submit()}
+                disabled={createOrderMutation.isPending}
+              >
+                {createOrderMutation.isPending ? "Menyimpan…" : "Simpan & Cetak Nota"}
               </Button>
             </div>
           </div>
@@ -414,14 +524,14 @@ function PosPage() {
       <ReceiptDialog
         order={receipt}
         outlet={outlet}
-        open={receipt !== null}
+        open={receipt !== null && Boolean(outlet)}
         onOpenChange={(open) => !open && setReceipt(null)}
       />
     </div>
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function SummaryRow({ label, value }: { readonly label: string; readonly value: string }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-muted-foreground">{label}</span>
