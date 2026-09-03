@@ -16,11 +16,19 @@ export default defineConfig({
        */
       proxy: {
         "/api": {
-          target: process.env["VITE_API_BASE_URL"] ?? "http://localhost:3001",
+          target: "http://localhost:3001",
           changeOrigin: true,
         },
       },
     },
+  },
+  /**
+   * Lovable's wrapper defaults Nitro to Cloudflare. Pin a Node preset here so
+   * production builds create a VPS-runnable server artifact instead. Extended
+   * Nitro options live in `nitro.config.ts`, whose types cover the full API.
+   */
+  nitro: {
+    preset: "node-server",
   },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
