@@ -1,0 +1,21 @@
+# Dependencies and build output (produced inside the image)
+node_modules/
+.output/
+.nitro/
+.tanstack/
+.wrangler/
+dist/
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# VCS, tooling, and agent scratch
+.git/
+.gitignore
+.omo/
+.lovable/
+.vercel/
+*.log
+*.md
